@@ -3,6 +3,7 @@ package grouper_test
 import (
 	"errors"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,31 +30,31 @@ var _ = Describe("Ordered Group", func() {
 		Δ time.Duration = 10 * time.Millisecond
 	)
 
-	BeforeEach(func() {
-		childRunner1 = fake_runner.NewTestRunner()
-		childRunner2 = fake_runner.NewTestRunner()
-		childRunner3 = fake_runner.NewTestRunner()
-
-		members = grouper.Members{
-			{"child1", childRunner1},
-			{"child2", childRunner2},
-			{"child3", childRunner3},
-		}
-
-		groupRunner = grouper.NewOrdered(os.Interrupt, members)
-	})
-
-	AfterEach(func() {
-		childRunner1.EnsureExit()
-		childRunner2.EnsureExit()
-		childRunner3.EnsureExit()
-
-		Eventually(started).Should(BeClosed())
-		groupProcess.Signal(os.Kill)
-		Eventually(groupProcess.Wait()).Should(Receive())
-	})
-
 	Describe("Start", func() {
+		BeforeEach(func() {
+			childRunner1 = fake_runner.NewTestRunner()
+			childRunner2 = fake_runner.NewTestRunner()
+			childRunner3 = fake_runner.NewTestRunner()
+
+			members = grouper.Members{
+				{"child1", childRunner1},
+				{"child2", childRunner2},
+				{"child3", childRunner3},
+			}
+
+			groupRunner = grouper.NewOrdered(os.Interrupt, members)
+		})
+
+		AfterEach(func() {
+			childRunner1.EnsureExit()
+			childRunner2.EnsureExit()
+			childRunner3.EnsureExit()
+
+			Eventually(started).Should(BeClosed())
+			groupProcess.Signal(os.Kill)
+			Eventually(groupProcess.Wait()).Should(Receive())
+		})
+
 		BeforeEach(func() {
 			started = make(chan struct{})
 			go func() {
@@ -192,6 +193,111 @@ var _ = Describe("Ordered Group", func() {
 					{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
 					{grouper.Member{"child1", childRunner1}, nil},
 				}))
+			})
+		})
+	})
+
+	Describe("Stop", func() {
+
+		var runnerIndex int64
+		var startOrder chan int64
+		var stopOrder chan int64
+
+		makeRunner := func() (ifrit.Runner, chan struct{}) {
+			quickExit := make(chan struct{})
+			return ifrit.RunFunc(func(signals <-chan os.Signal, ready chan<- struct{}) error {
+				index := atomic.AddInt64(&runnerIndex, 1)
+				startOrder <- index
+				close(ready)
+
+				select {
+				case <-quickExit:
+				case <-signals:
+				}
+				stopOrder <- index
+
+				return nil
+			}), quickExit
+		}
+
+		BeforeEach(func() {
+			startOrder = make(chan int64, 3)
+			stopOrder = make(chan int64, 3)
+
+			r1, _ := makeRunner()
+			r2, _ := makeRunner()
+			r3, _ := makeRunner()
+			members = grouper.Members{
+				{"child1", r1},
+				{"child2", r2},
+				{"child3", r3},
+			}
+		})
+
+		AfterEach(func() {
+			groupProcess.Signal(os.Kill)
+			Eventually(groupProcess.Wait()).Should(Receive())
+		})
+
+		JustBeforeEach(func() {
+			groupRunner = grouper.NewOrdered(os.Interrupt, members)
+
+			started = make(chan struct{})
+			go func() {
+				groupProcess = ifrit.Envoke(groupRunner)
+				close(started)
+			}()
+
+			Eventually(started).Should(BeClosed())
+		})
+
+		It("stops in reverse order", func() {
+			groupProcess.Signal(os.Kill)
+			Eventually(groupProcess.Wait()).Should(Receive())
+			close(startOrder)
+			close(stopOrder)
+
+			Ω(startOrder).To(HaveLen(len(stopOrder)))
+
+			order := []int64{}
+			for r := range startOrder {
+				order = append(order, r)
+			}
+
+			for i := len(stopOrder) - 1; i >= 0; i-- {
+				Ω(order[i]).To(Equal(<-stopOrder))
+			}
+		})
+
+		Context("when a runner stops", func() {
+			var quickExit chan struct{}
+
+			BeforeEach(func() {
+				var r1 ifrit.Runner
+				r1, quickExit = makeRunner()
+				members[0].Runner = r1
+			})
+
+			It("stops in reverse order", func() {
+				close(quickExit)
+				Eventually(groupProcess.Wait()).Should(Receive())
+				close(startOrder)
+				close(stopOrder)
+
+				Ω(startOrder).To(HaveLen(len(stopOrder)))
+
+				order := []int64{}
+				for r := range startOrder {
+					order = append(order, r)
+				}
+
+				firstDeath := <-stopOrder
+				for i := len(order) - 1; i >= 0; i-- {
+					if order[i] == firstDeath {
+						continue
+					}
+					Ω(order[i]).To(Equal(<-stopOrder))
+				}
 			})
 		})
 	})

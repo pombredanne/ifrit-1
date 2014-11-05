@@ -3,6 +3,7 @@ package grouper_test
 import (
 	"os"
 	"time"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/tedsuo/ifrit"
@@ -40,7 +41,7 @@ var _ = Describe("dynamicGroup", func() {
 			member2 = grouper.Member{"child2", childRunner2}
 			member3 = grouper.Member{"child3", childRunner3}
 
-			pool = grouper.NewDynamic(nil, 3, 2)
+			pool = grouper.NewDynamic(nil, 3, 2, false)
 			client = pool.Client()
 			poolProcess = ifrit.Envoke(pool)
 

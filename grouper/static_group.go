@@ -37,8 +37,12 @@ being signaled, the group propogates the termination signal.  A nil termination
 signal is not propogated.
 */
 func NewStatic(signal os.Signal, members []Member, init func(members Members, client DynamicClient)) StaticGroup {
+	return newStatic(signal, members, init, false)
+}
+
+func newStatic(signal os.Signal, members []Member, init func(members Members, client DynamicClient), ordered bool) StaticGroup {
 	return staticGroup{
-		pool:    NewDynamic(signal, len(members), len(members)),
+		pool:    NewDynamic(signal, len(members), len(members), ordered),
 		Members: members,
 		Init:    init,
 	}

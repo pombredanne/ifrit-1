@@ -24,7 +24,7 @@ type entranceEventBroadcaster struct {
 	channels   []entranceEventChannel
 	buffer     slidingBuffer
 	bufferSize int
-	lock       *sync.RWMutex
+	lock       *sync.Mutex
 }
 
 func newEntranceEventBroadcaster(bufferSize int) *entranceEventBroadcaster {
@@ -32,7 +32,7 @@ func newEntranceEventBroadcaster(bufferSize int) *entranceEventBroadcaster {
 		channels:   make([]entranceEventChannel, 0),
 		buffer:     newSlidingBuffer(bufferSize),
 		bufferSize: bufferSize,
-		lock:       new(sync.RWMutex),
+		lock:       new(sync.Mutex),
 	}
 }
 
@@ -49,8 +49,8 @@ func (b *entranceEventBroadcaster) Attach() entranceEventChannel {
 }
 
 func (b *entranceEventBroadcaster) Broadcast(entrance EntranceEvent) {
-	b.lock.RLock()
-	defer b.lock.RUnlock()
+	b.lock.Lock()
+	defer b.lock.Unlock()
 
 	b.buffer.Append(entrance)
 

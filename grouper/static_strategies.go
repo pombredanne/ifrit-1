@@ -36,7 +36,7 @@ describe a list of dependent processes, where each process depends upon the
 previous being available in order to function correctly.
 */
 func NewOrdered(signal os.Signal, members []Member) StaticGroup {
-	return NewStatic(signal, members, orderedInit)
+	return newStatic(signal, members, orderedInit, true)
 }
 
 func orderedInit(members Members, client DynamicClient) {

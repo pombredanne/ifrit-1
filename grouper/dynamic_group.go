@@ -3,6 +3,7 @@ package grouper
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/tedsuo/ifrit"
 )
@@ -20,6 +21,7 @@ type DynamicGroup interface {
 }
 
 type dynamicGroup struct {
+	ordered  bool
 	client   dynamicClient
 	signal   os.Signal
 	poolSize int
@@ -40,8 +42,9 @@ The signal argument sets the termination signal.  If a member exits before
 being signaled, the group propogates the termination signal.  A nil termination
 signal is not propogated.
 */
-func NewDynamic(signal os.Signal, maxCapacity int, eventBufferSize int) DynamicGroup {
+func NewDynamic(signal os.Signal, maxCapacity int, eventBufferSize int, ordered bool) DynamicGroup {
 	return &dynamicGroup{
+		ordered:  ordered,
 		client:   newClient(eventBufferSize),
 		poolSize: maxCapacity,
 		signal:   signal,
@@ -53,7 +56,7 @@ func (p *dynamicGroup) Client() DynamicClient {
 }
 
 func (p *dynamicGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
-	processes := newProcessSet()
+	processes := newProcessSet(p.ordered)
 	insertEvents := p.client.insertEventListener()
 	closeNotifier := p.client.CloseNotifier()
 	entranceEvents := make(entranceEventChannel)
@@ -157,14 +160,28 @@ func waitForEvents(
 	}
 }
 
+type processElement struct {
+	index   int
+	process ifrit.Process
+}
+
+type processElementSlice []processElement
+
+func (p processElementSlice) Len() int           { return len(p) }
+func (p processElementSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p processElementSlice) Less(i, j int) bool { return p[i].index > p[j].index }
+
 type processSet struct {
-	processes map[string]ifrit.Process
+	ordered   bool
+	count     int
+	processes map[string]processElement
 	shutdown  os.Signal
 }
 
-func newProcessSet() *processSet {
+func newProcessSet(ordered bool) *processSet {
 	return &processSet{
-		processes: map[string]ifrit.Process{},
+		ordered:   ordered,
+		processes: map[string]processElement{},
 	}
 }
 
@@ -174,8 +191,21 @@ func (g *processSet) Signaled() bool {
 
 func (g *processSet) Signal(signal os.Signal) {
 	g.shutdown = signal
+
+	var pSlice processElementSlice
 	for _, p := range g.processes {
-		p.Signal(signal)
+		pSlice = append(pSlice, p)
+	}
+
+	if g.ordered {
+		sort.Sort(pSlice)
+	}
+
+	for _, p := range pSlice {
+		p.process.Signal(signal)
+		if g.ordered {
+			p.process.Wait()
+		}
 	}
 }
 
@@ -192,7 +222,12 @@ func (g *processSet) Add(name string, process ifrit.Process) {
 	if ok {
 		panic(fmt.Errorf("member inserted twice: %#v", name))
 	}
-	g.processes[name] = process
+	g.processes[name] = processElement{
+		process: process,
+		index:   g.count,
+	}
+
+	g.count++
 }
 
 func (g *processSet) Remove(name string) {
