@@ -72,20 +72,26 @@ func (g orderedGroup) orderedStrategy(signals <-chan os.Signal, ready chan<- str
 	closed := client.CloseNotifier()
 	exitTrace := make(ErrorTrace, 0, bufferSize)
 	exitListener := client.ExitListener()
+
 	var signal os.Signal
 	println("starting", exitListener)
 	for _, member := range g.Members {
+		println("doing", member.Name)
 		select {
 		case insert <- member:
+		case <-closed:
+			return traceExitEvents(exitTrace, exitListener)
+		}
+
+		println("doing 2", member.Name)
+		select {
+		case <-entranceEvents:
 		case exit := <-exitListener:
 			println("Saw Exit", exit.Member.Name)
 			exitTrace = append(exitTrace, exit)
 			return traceExitEvents(exitTrace, exitListener)
-
-		case <-closed:
-			return traceExitEvents(exitTrace, exitListener)
 		}
-		<-entranceEvents
+		println("doing 3", member.Name)
 	}
 	println("after start")
 	client.Close()
