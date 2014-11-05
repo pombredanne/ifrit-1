@@ -46,6 +46,7 @@ var _ = Describe("Ordered Group", func() {
 		})
 
 		AfterEach(func() {
+			println("After each")
 			childRunner1.EnsureExit()
 			childRunner2.EnsureExit()
 			childRunner3.EnsureExit()
@@ -58,7 +59,7 @@ var _ = Describe("Ordered Group", func() {
 		BeforeEach(func() {
 			started = make(chan struct{})
 			go func() {
-				groupProcess = ifrit.Envoke(groupRunner)
+				groupProcess = ifrit.Invoke(groupRunner)
 				close(started)
 			}()
 		})
@@ -107,12 +108,6 @@ var _ = Describe("Ordered Group", func() {
 					groupProcess.Signal(syscall.SIGUSR2)
 				})
 
-				It("sends the signal to all child runners", func() {
-					Eventually(signal1).Should(Receive(Equal(syscall.SIGUSR2)))
-					Eventually(signal2).Should(Receive(Equal(syscall.SIGUSR2)))
-					Eventually(signal3).Should(Receive(Equal(syscall.SIGUSR2)))
-				})
-
 				It("doesn't send any more signals to remaining child processes", func() {
 					Eventually(signal3).Should(Receive(Equal(syscall.SIGUSR2)))
 					childRunner2.TriggerExit(nil)
@@ -126,8 +121,9 @@ var _ = Describe("Ordered Group", func() {
 				})
 
 				It("sends an interrupt signal to the other processes", func() {
-					Eventually(signal2).Should(Receive(Equal(os.Interrupt)))
 					Eventually(signal3).Should(Receive(Equal(os.Interrupt)))
+					childRunner3.TriggerExit(nil)
+					Eventually(signal2).Should(Receive(Equal(os.Interrupt)))
 				})
 
 				It("does not exit", func() {
@@ -179,13 +175,13 @@ var _ = Describe("Ordered Group", func() {
 			BeforeEach(func() {
 				signal1 := childRunner1.WaitForCall()
 				childRunner1.TriggerReady()
-				childRunner2.TriggerExit(errors.New("Fail"))
+				childRunner2.TriggerExit(errors.New("Fail"))				
 				Eventually(signal1).Should(Receive(Equal(os.Interrupt)))
 				childRunner1.TriggerExit(nil)
 				Eventually(started).Should(BeClosed())
 			})
 
-			It("exits without starting further processes", func() {
+			FIt("exits without starting further processes", func() {
 				var err error
 
 				Eventually(groupProcess.Wait()).Should(Receive(&err))
@@ -203,7 +199,7 @@ var _ = Describe("Ordered Group", func() {
 		var startOrder chan int64
 		var stopOrder chan int64
 
-		makeRunner := func() (ifrit.Runner, chan struct{}) {
+		makeRunner := func(waitTime time.Duration) (ifrit.Runner, chan struct{}) {
 			quickExit := make(chan struct{})
 			return ifrit.RunFunc(func(signals <-chan os.Signal, ready chan<- struct{}) error {
 				index := atomic.AddInt64(&runnerIndex, 1)
@@ -214,6 +210,7 @@ var _ = Describe("Ordered Group", func() {
 				case <-quickExit:
 				case <-signals:
 				}
+				time.Sleep(waitTime)
 				stopOrder <- index
 
 				return nil
@@ -224,9 +221,9 @@ var _ = Describe("Ordered Group", func() {
 			startOrder = make(chan int64, 3)
 			stopOrder = make(chan int64, 3)
 
-			r1, _ := makeRunner()
-			r2, _ := makeRunner()
-			r3, _ := makeRunner()
+			r1, _ := makeRunner(0)
+			r2, _ := makeRunner(30 * time.Millisecond)
+			r3, _ := makeRunner(50 * time.Millisecond)
 			members = grouper.Members{
 				{"child1", r1},
 				{"child2", r2},
@@ -274,7 +271,7 @@ var _ = Describe("Ordered Group", func() {
 
 			BeforeEach(func() {
 				var r1 ifrit.Runner
-				r1, quickExit = makeRunner()
+				r1, quickExit = makeRunner(0)
 				members[0].Runner = r1
 			})
 

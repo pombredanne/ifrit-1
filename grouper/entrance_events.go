@@ -44,7 +44,11 @@ func (b *entranceEventBroadcaster) Attach() entranceEventChannel {
 	b.buffer.Range(func(event interface{}) {
 		channel <- event.(EntranceEvent)
 	})
-	b.channels = append(b.channels, channel)
+	if b.channels != nil {
+		b.channels = append(b.channels, channel)
+	} else {
+		close(channel)
+	}
 	return channel
 }
 

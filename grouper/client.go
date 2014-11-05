@@ -58,10 +58,17 @@ type DynamicClient interface {
 	*/
 	Close()
 
+	Get(name string) (ifrit.Process, bool)
+
 	/*
 	   See the StaticClient interface for documentation on event listeners.
 	*/
 	StaticClient
+}
+
+type memberRequest struct {
+	Name     string
+	Response chan ifrit.Process
 }
 
 /*
@@ -69,6 +76,8 @@ dynamicClient implements DynamicClient.
 */
 type dynamicClient struct {
 	insertChannel       chan Member
+	getMemberChannel    chan memberRequest
+	completeNotifier    chan struct{}
 	closeNotifier       chan struct{}
 	closeOnce           *sync.Once
 	entranceBroadcaster *entranceEventBroadcaster
@@ -78,6 +87,8 @@ type dynamicClient struct {
 func newClient(bufferSize int) dynamicClient {
 	return dynamicClient{
 		insertChannel:       make(chan Member),
+		getMemberChannel:    make(chan memberRequest),
+		completeNotifier:    make(chan struct{}),
 		closeNotifier:       make(chan struct{}),
 		closeOnce:           new(sync.Once),
 		entranceBroadcaster: newEntranceEventBroadcaster(bufferSize),
@@ -85,8 +96,25 @@ func newClient(bufferSize int) dynamicClient {
 	}
 }
 
-func (c dynamicClient) Get(Member) (ifrit.Process, bool) {
-	return nil, false
+func (c dynamicClient) Get(name string) (ifrit.Process, bool) {
+	req := memberRequest{
+		Name:     name,
+		Response: make(chan ifrit.Process),
+	}
+	select {
+	case c.getMemberChannel <- req:
+		p, ok := <-req.Response
+		if !ok {
+			return nil, false
+		}
+		return p, true
+	case <-c.completeNotifier:
+		return nil, false
+	}
+}
+
+func (c dynamicClient) memberRequests() chan memberRequest {
+	return c.getMemberChannel
 }
 
 func (c dynamicClient) Inserter() chan<- Member {
@@ -124,6 +152,7 @@ func (c dynamicClient) closeExitBroadcaster() {
 func (c dynamicClient) closeBroadcasters() error {
 	c.entranceBroadcaster.Close()
 	c.exitBroadcaster.Close()
+	close(c.completeNotifier)
 	return nil
 }
 
