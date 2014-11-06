@@ -160,11 +160,9 @@ var _ = Describe("Ordered Group", func() {
 					It("returns an error indicating which child processes failed", func() {
 						var err error
 						Eventually(groupProcess.Wait()).Should(Receive(&err))
-						Ω(err).Should(Equal(grouper.ErrorTrace{
-							{grouper.Member{"child1", childRunner1}, nil},
-							{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
-							{grouper.Member{"child3", childRunner3}, nil},
-						}))
+						Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil}))
+						Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")}))
+						Ω(exitIndex("child1", err)).Should(BeNumerically(">", exitIndex("child2", err)))
 					})
 				})
 			})
@@ -175,7 +173,6 @@ var _ = Describe("Ordered Group", func() {
 				signal1 := childRunner1.WaitForCall()
 				childRunner1.TriggerReady()
 				childRunner2.TriggerExit(errors.New("Fail"))
-				childRunner3.TriggerExit(errors.New("Fail"))
 				Eventually(signal1).Should(Receive(Equal(os.Interrupt)))
 				childRunner1.TriggerExit(nil)
 				Eventually(started).Should(BeClosed())
@@ -185,11 +182,10 @@ var _ = Describe("Ordered Group", func() {
 				var err error
 
 				Eventually(groupProcess.Wait()).Should(Receive(&err))
-				Ω(err).Should(Equal(grouper.ErrorTrace{
-					{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
-					{grouper.Member{"child3", childRunner3}, errors.New("Fail")},
-					{grouper.Member{"child1", childRunner1}, nil},
-				}))
+
+				Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil}))
+				Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")}))
+				Ω(exitIndex("child1", err)).Should(BeNumerically(">", exitIndex("child2", err)))
 			})
 		})
 	})
@@ -300,3 +296,14 @@ var _ = Describe("Ordered Group", func() {
 		})
 	})
 })
+
+func exitIndex(name string, err error) int {
+	errTrace := err.(grouper.ErrorTrace)
+	for i, exitTrace := range errTrace {
+		if exitTrace.Member.Name == name {
+			return i
+		}
+	}
+
+	return -1
+}

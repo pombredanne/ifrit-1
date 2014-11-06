@@ -2,6 +2,7 @@ package grouper
 
 import (
 	"os"
+	"reflect"
 
 	"github.com/tedsuo/ifrit"
 )
@@ -12,96 +13,106 @@ member starting when the previous becomes ready.  Use an ordered group to
 describe a list of dependent processes, where each process depends upon the
 previous being available in order to function correctly.
 */
-func NewOrdered(terminationSignal os.Signal, members []Member) StaticGroup {
+func NewOrdered(terminationSignal os.Signal, members Members) ifrit.Runner {
 	return orderedGroup{
 		terminationSignal: terminationSignal,
-		pool:              NewDynamic(nil, len(members), len(members)),
-		Members:           members,
-		shutdown:          make(chan struct{}),
+		pool:              make(map[string]ifrit.Process),
+		members:           members,
 	}
 }
 
 type orderedGroup struct {
 	terminationSignal os.Signal
-	pool              DynamicGroup
-	shutdown          chan struct{}
-	Members
+	pool              map[string]ifrit.Process
+	members           Members
 }
 
-func (g orderedGroup) Client() StaticClient {
-	return g.pool.Client()
+func (o orderedGroup) validate() error {
+	return o.members.Validate()
 }
 
 func (g orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
-	err := g.Members.Validate()
+	err := g.validate()
 	if err != nil {
 		return err
 	}
 
-	ifrit.Background(g.pool)
-
-	go func() {
-		g.orderedStart()
-		close(ready)
-	}()
-
-	go g.waitForSignal(signals)
-
-	client := g.pool.Client()
-	return traceExitEvents(make(ErrorTrace, 0, len(g.Members)), client.ExitListener())
-}
-
-func (g orderedGroup) orderedStart() {
-	client := g.pool.Client()
-	entranceEvents := client.EntranceListener()
-	insert := client.Inserter()
-	closed := client.CloseNotifier()
-
-	for _, member := range g.Members {
-		select {
-		case insert <- member:
-		case <-closed:
-			return
-		}
-
-		<-entranceEvents
+	signal, errTrace := g.orderedStart(signals)
+	if errTrace != nil {
+		return g.stop(g.terminationSignal, errTrace)
 	}
 
-	client.Close()
+	if signal != nil {
+		return g.stop(signal, errTrace)
+	}
+
+	close(ready)
+
+	signal = g.waitForSignal(signals)
+	return g.stop(signal, errTrace)
 }
 
-func (g orderedGroup) waitForSignal(signals <-chan os.Signal) {
-	client := g.pool.Client()
-	memberExit := client.ExitListener()
-
-	for {
+func (g *orderedGroup) orderedStart(signals <-chan os.Signal) (os.Signal, ErrorTrace) {
+	for _, member := range g.members {
+		p := ifrit.Background(member)
 		select {
+		case <-p.Ready():
+			g.pool[member.Name] = p
+		case err := <-p.Wait():
+			return nil, ErrorTrace{
+				ExitEvent{Member: member, Err: err},
+			}
 		case signal := <-signals:
-			g.orderedStop(signal)
-			return
-
-		case _, ok := <-memberExit:
-			if !ok {
-				return
-			}
-			if g.terminationSignal != nil {
-				client.Close()
-				g.orderedStop(g.terminationSignal)
-				return
-			}
+			return signal, nil
 		}
 	}
+
+	return nil, nil
 }
 
-func (g orderedGroup) orderedStop(signal os.Signal) {
-	client := g.pool.Client()
-	client.Close()
+func (g *orderedGroup) waitForSignal(signals <-chan os.Signal) os.Signal {
+	cases := make([]reflect.SelectCase, 0, len(g.pool)+1)
+	for _, process := range g.pool {
+		cases = append(cases, reflect.SelectCase{
+			Dir:  reflect.SelectRecv,
+			Chan: reflect.ValueOf(process.Wait()),
+		})
+	}
+	cases = append(cases, reflect.SelectCase{
+		Dir:  reflect.SelectRecv,
+		Chan: reflect.ValueOf(signals),
+	})
 
-	for i := len(g.Members) - 1; i >= 0; i-- {
-		p, ok := client.Get(g.Members[i].Name)
-		if ok {
+	chosen, recv, _ := reflect.Select(cases)
+	if chosen == len(cases)-1 {
+		return recv.Interface().(os.Signal)
+	}
+
+	return g.terminationSignal
+}
+
+func (g *orderedGroup) stop(signal os.Signal, errTrace ErrorTrace) ErrorTrace {
+	errOccurred := len(errTrace) > 0
+
+	for i := len(g.pool) - 1; i >= 0; i-- {
+		m := g.members[i]
+		if p, ok := g.pool[m.Name]; ok {
 			p.Signal(signal)
-			<-p.Wait()
+
+			err := <-p.Wait()
+			errTrace = append(errTrace, ExitEvent{
+				Member: m,
+				Err:    err,
+			})
+			if err != nil {
+				errOccurred = true
+			}
 		}
 	}
+
+	if errOccurred {
+		return errTrace
+	}
+
+	return nil
 }
