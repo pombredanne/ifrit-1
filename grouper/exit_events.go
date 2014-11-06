@@ -40,7 +40,6 @@ func (b *exitEventBroadcaster) Attach() exitEventChannel {
 	b.buffer.Range(func(event interface{}) {
 		channel <- event.(ExitEvent)
 	})
-	println("attaching")
 	if b.channels != nil {
 		b.channels = append(b.channels, channel)
 	} else {
@@ -52,10 +51,8 @@ func (b *exitEventBroadcaster) Attach() exitEventChannel {
 func (b *exitEventBroadcaster) Broadcast(exit ExitEvent) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	println("broadcasting", exit.Member.Name)
 	b.buffer.Append(exit)
 	for _, exitChan := range b.channels {
-		println("broadcast", exitChan)
 		exitChan <- exit
 	}
 }

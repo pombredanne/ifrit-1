@@ -46,7 +46,6 @@ var _ = Describe("Ordered Group", func() {
 		})
 
 		AfterEach(func() {
-			println("After each")
 			childRunner1.EnsureExit()
 			childRunner2.EnsureExit()
 			childRunner3.EnsureExit()
@@ -175,18 +174,20 @@ var _ = Describe("Ordered Group", func() {
 			BeforeEach(func() {
 				signal1 := childRunner1.WaitForCall()
 				childRunner1.TriggerReady()
-				childRunner2.TriggerExit(errors.New("Fail"))				
+				childRunner2.TriggerExit(errors.New("Fail"))
+				childRunner3.TriggerExit(errors.New("Fail"))
 				Eventually(signal1).Should(Receive(Equal(os.Interrupt)))
 				childRunner1.TriggerExit(nil)
 				Eventually(started).Should(BeClosed())
 			})
 
-			FIt("exits without starting further processes", func() {
+			It("exits without starting further processes", func() {
 				var err error
 
 				Eventually(groupProcess.Wait()).Should(Receive(&err))
 				Ω(err).Should(Equal(grouper.ErrorTrace{
 					{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
+					{grouper.Member{"child3", childRunner3}, errors.New("Fail")},
 					{grouper.Member{"child1", childRunner1}, nil},
 				}))
 			})

@@ -8,6 +8,7 @@ import (
 
 	"github.com/tedsuo/ifrit"
 	"github.com/tedsuo/ifrit/fake_runner"
+	"github.com/tedsuo/ifrit/ginkgomon"
 	"github.com/tedsuo/ifrit/grouper"
 
 	. "github.com/onsi/ginkgo"
@@ -16,8 +17,6 @@ import (
 
 var _ = Describe("Parallel Group", func() {
 	var (
-		started chan struct{}
-
 		groupRunner  ifrit.Runner
 		groupProcess ifrit.Process
 		members      grouper.Members
@@ -48,18 +47,12 @@ var _ = Describe("Parallel Group", func() {
 		childRunner2.EnsureExit()
 		childRunner3.EnsureExit()
 
-		Eventually(started).Should(BeClosed())
-		groupProcess.Signal(os.Kill)
-		Eventually(groupProcess.Wait()).Should(Receive())
+		ginkgomon.Kill(groupProcess)
 	})
 
 	Describe("Start", func() {
 		BeforeEach(func() {
-			started = make(chan struct{})
-			go func() {
-				groupProcess = ifrit.Envoke(groupRunner)
-				close(started)
-			}()
+			groupProcess = ifrit.Background(groupRunner)
 		})
 
 		It("runs all runners at the same time", func() {
@@ -67,13 +60,13 @@ var _ = Describe("Parallel Group", func() {
 			Eventually(childRunner2.RunCallCount).Should(Equal(1))
 			Eventually(childRunner3.RunCallCount).Should(Equal(1))
 
-			Consistently(started).ShouldNot(BeClosed())
+			Consistently(groupProcess.Ready()).ShouldNot(BeClosed())
 
 			childRunner1.TriggerReady()
 			childRunner2.TriggerReady()
 			childRunner3.TriggerReady()
 
-			Eventually(started).Should(BeClosed())
+			Eventually(groupProcess.Ready()).Should(BeClosed())
 		})
 
 		Describe("when all the runners are ready", func() {
@@ -91,7 +84,7 @@ var _ = Describe("Parallel Group", func() {
 				signal3 = childRunner3.WaitForCall()
 				childRunner3.TriggerReady()
 
-				Eventually(started).Should(BeClosed())
+				Eventually(groupProcess.Ready()).Should(BeClosed())
 			})
 
 			Describe("when it receives a signal", func() {
@@ -179,7 +172,7 @@ var _ = Describe("Parallel Group", func() {
 				Eventually(signal3).Should(Receive(Equal(os.Interrupt)))
 				childRunner3.TriggerExit(nil)
 
-				Eventually(started).Should(BeClosed())
+				Eventually(groupProcess.Ready()).Should(BeClosed())
 			})
 
 			It("exits after starting all processes", func() {

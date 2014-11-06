@@ -127,9 +127,9 @@ func (p *dynamicGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) erro
 				return p.client.closeBroadcasters()
 			}
 
-			// if !processes.Signaled() {
-			// 	insertEvents = p.client.insertEventListener()
-			// }
+			if !processes.Signaled() && closeNotifier != nil {
+				insertEvents = p.client.insertEventListener()
+			}
 		}
 	}
 }
