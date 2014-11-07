@@ -14,7 +14,7 @@ Use an ordered group to describe a list of dependent processes, where each proce
 depends upon the previous being available in order to function correctly.
 */
 func NewOrdered(terminationSignal os.Signal, members Members) ifrit.Runner {
-	return orderedGroup{
+	return &orderedGroup{
 		terminationSignal: terminationSignal,
 		pool:              make(map[string]ifrit.Process),
 		members:           members,
@@ -27,7 +27,7 @@ type orderedGroup struct {
 	members           Members
 }
 
-func (g orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
+func (g *orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
 	err := g.validate()
 	if err != nil {
 		return err
@@ -48,8 +48,8 @@ func (g orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error
 	return g.stop(signal, errTrace)
 }
 
-func (o orderedGroup) validate() error {
-	return o.members.Validate()
+func (g *orderedGroup) validate() error {
+	return g.members.Validate()
 }
 
 func (g *orderedGroup) orderedStart(signals <-chan os.Signal) (os.Signal, ErrorTrace) {
@@ -101,7 +101,7 @@ func (g *orderedGroup) waitForSignal(signals <-chan os.Signal, errTrace ErrorTra
 	return g.terminationSignal, errTrace
 }
 
-func (g *orderedGroup) stop(signal os.Signal, errTrace ErrorTrace) ErrorTrace {
+func (g *orderedGroup) stop(signal os.Signal, errTrace ErrorTrace) error {
 	errOccurred := false
 	exited := map[string]struct{}{}
 	if len(errTrace) > 0 {
