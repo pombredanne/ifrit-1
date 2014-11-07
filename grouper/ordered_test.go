@@ -160,9 +160,11 @@ var _ = Describe("Ordered Group", func() {
 					It("returns an error indicating which child processes failed", func() {
 						var err error
 						Eventually(groupProcess.Wait()).Should(Receive(&err))
-						Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil}))
-						Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")}))
-						Ω(exitIndex("child1", err)).Should(BeNumerically(">", exitIndex("child2", err)))
+						errTrace := err.(grouper.ErrorTrace)
+						Ω(errTrace).Should(HaveLen(3))
+
+						Ω(errTrace).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil}))
+						Ω(errTrace).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")}))
 					})
 				})
 			})
@@ -182,10 +184,10 @@ var _ = Describe("Ordered Group", func() {
 				var err error
 
 				Eventually(groupProcess.Wait()).Should(Receive(&err))
-
-				Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil}))
-				Ω(err).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")}))
-				Ω(exitIndex("child1", err)).Should(BeNumerically(">", exitIndex("child2", err)))
+				errTrace := err.(grouper.ErrorTrace)
+				Ω(errTrace).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil}))
+				Ω(errTrace).Should(ContainElement(grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")}))
+				Ω(exitIndex("child1", errTrace)).Should(BeNumerically(">", exitIndex("child2", errTrace)))
 			})
 		})
 	})
@@ -297,8 +299,7 @@ var _ = Describe("Ordered Group", func() {
 	})
 })
 
-func exitIndex(name string, err error) int {
-	errTrace := err.(grouper.ErrorTrace)
+func exitIndex(name string, errTrace grouper.ErrorTrace) int {
 	for i, exitTrace := range errTrace {
 		if exitTrace.Member.Name == name {
 			return i

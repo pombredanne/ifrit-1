@@ -44,7 +44,7 @@ func (g orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error
 
 	close(ready)
 
-	signal = g.waitForSignal(signals)
+	signal, errTrace = g.waitForSignal(signals, errTrace)
 	return g.stop(signal, errTrace)
 }
 
@@ -70,12 +70,12 @@ func (g *orderedGroup) orderedStart(signals <-chan os.Signal) (os.Signal, ErrorT
 	return nil, nil
 }
 
-func (g *orderedGroup) waitForSignal(signals <-chan os.Signal) os.Signal {
+func (g *orderedGroup) waitForSignal(signals <-chan os.Signal, errTrace ErrorTrace) (os.Signal, ErrorTrace) {
 	cases := make([]reflect.SelectCase, 0, len(g.pool)+1)
-	for _, process := range g.pool {
+	for i := 0; i < len(g.pool); i++ {
 		cases = append(cases, reflect.SelectCase{
 			Dir:  reflect.SelectRecv,
-			Chan: reflect.ValueOf(process.Wait()),
+			Chan: reflect.ValueOf(g.pool[g.members[i].Name].Wait()),
 		})
 	}
 	cases = append(cases, reflect.SelectCase{
@@ -85,17 +85,39 @@ func (g *orderedGroup) waitForSignal(signals <-chan os.Signal) os.Signal {
 
 	chosen, recv, _ := reflect.Select(cases)
 	if chosen == len(cases)-1 {
-		return recv.Interface().(os.Signal)
+		return recv.Interface().(os.Signal), errTrace
 	}
 
-	return g.terminationSignal
+	var err error
+	if !recv.IsNil() {
+		err = recv.Interface().(error)
+	}
+
+	errTrace = append(errTrace, ExitEvent{
+		Member: g.members[chosen],
+		Err:    err,
+	})
+
+	return g.terminationSignal, errTrace
 }
 
 func (g *orderedGroup) stop(signal os.Signal, errTrace ErrorTrace) ErrorTrace {
-	errOccurred := len(errTrace) > 0
+	errOccurred := false
+	exited := map[string]struct{}{}
+	if len(errTrace) > 0 {
+		for _, exitEvent := range errTrace {
+			exited[exitEvent.Member.Name] = struct{}{}
+			if exitEvent.Err != nil {
+				errOccurred = true
+			}
+		}
+	}
 
 	for i := len(g.pool) - 1; i >= 0; i-- {
 		m := g.members[i]
+		if _, found := exited[m.Name]; found {
+			continue
+		}
 		if p, ok := g.pool[m.Name]; ok {
 			p.Signal(signal)
 
