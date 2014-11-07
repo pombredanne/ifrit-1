@@ -150,11 +150,11 @@ var _ = Describe("Parallel Group", func() {
 					It("returns an error indicating which child processes failed", func() {
 						var err error
 						Eventually(groupProcess.Wait()).Should(Receive(&err))
-						Ω(err).Should(Equal(grouper.ErrorTrace{
-							{grouper.Member{"child1", childRunner1}, nil},
-							{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
-							{grouper.Member{"child3", childRunner3}, nil},
-						}))
+						Ω(err).Should(ConsistOf(
+							grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil},
+							grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
+							grouper.ExitEvent{grouper.Member{"child3", childRunner3}, nil},
+						))
 					})
 				})
 			})
@@ -162,28 +162,31 @@ var _ = Describe("Parallel Group", func() {
 
 		Describe("Failed start", func() {
 			BeforeEach(func() {
+				signal1 := childRunner1.WaitForCall()
+				childRunner1.TriggerReady()
+				signal3 := childRunner3.WaitForCall()
+				childRunner3.TriggerReady()
+
 				childRunner2.TriggerExit(errors.New("Fail"))
 
-				signal1 := childRunner1.WaitForCall()
+				Consistently(groupProcess.Ready()).ShouldNot(BeClosed())
+
 				Eventually(signal1).Should(Receive(Equal(os.Interrupt)))
-				childRunner1.TriggerExit(nil)
-
-				signal3 := childRunner3.WaitForCall()
 				Eventually(signal3).Should(Receive(Equal(os.Interrupt)))
-				childRunner3.TriggerExit(nil)
 
-				Eventually(groupProcess.Ready()).Should(BeClosed())
+				childRunner1.TriggerExit(nil)
+				childRunner3.TriggerExit(nil)
 			})
 
 			It("exits after starting all processes", func() {
 				var err error
 
 				Eventually(groupProcess.Wait()).Should(Receive(&err))
-				Ω(err).Should(Equal(grouper.ErrorTrace{
-					{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
-					{grouper.Member{"child1", childRunner1}, nil},
-					{grouper.Member{"child3", childRunner3}, nil},
-				}))
+				Ω(err).Should(ConsistOf(
+					grouper.ExitEvent{grouper.Member{"child2", childRunner2}, errors.New("Fail")},
+					grouper.ExitEvent{grouper.Member{"child1", childRunner1}, nil},
+					grouper.ExitEvent{grouper.Member{"child3", childRunner3}, nil},
+				))
 			})
 		})
 	})

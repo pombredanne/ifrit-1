@@ -8,10 +8,10 @@ import (
 )
 
 /*
-NewOrdered creates a static group which starts it's members in order, each
-member starting when the previous becomes ready.  Use an ordered group to
-describe a list of dependent processes, where each process depends upon the
-previous being available in order to function correctly.
+NewOrdered starts it's members in order, each member starting when the previous
+becomes ready.  On shutdown, it will shut the started processes down in reverse order.
+Use an ordered group to describe a list of dependent processes, where each process
+depends upon the previous being available in order to function correctly.
 */
 func NewOrdered(terminationSignal os.Signal, members Members) ifrit.Runner {
 	return orderedGroup{
@@ -25,10 +25,6 @@ type orderedGroup struct {
 	terminationSignal os.Signal
 	pool              map[string]ifrit.Process
 	members           Members
-}
-
-func (o orderedGroup) validate() error {
-	return o.members.Validate()
 }
 
 func (g orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error {
@@ -50,6 +46,10 @@ func (g orderedGroup) Run(signals <-chan os.Signal, ready chan<- struct{}) error
 
 	signal = g.waitForSignal(signals)
 	return g.stop(signal, errTrace)
+}
+
+func (o orderedGroup) validate() error {
+	return o.members.Validate()
 }
 
 func (g *orderedGroup) orderedStart(signals <-chan os.Signal) (os.Signal, ErrorTrace) {

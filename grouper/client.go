@@ -7,11 +7,13 @@ import (
 )
 
 /*
-StaticClient provides a client with event notifications, via channels.
-Event channels are independent of each other. Each event channel has a buffer,
-which records events and will drop events once the buffer is filled.
+DynamicClient provides a client with group controls and event notifications.
+A client can use the insert channel to add members to the group. When the group
+becomes full, the insert channel blocks until a running process exits the group.
+Once there are no more members have been added, the client can close the dynamic
+group, preventing new members to be added.
 */
-type StaticClient interface {
+type DynamicClient interface {
 
 	/*
 	   EntranceListener provides a new buffered channel of entrance events, which are
@@ -33,17 +35,6 @@ type StaticClient interface {
 	   once the group has been closed.
 	*/
 	CloseNotifier() <-chan struct{}
-}
-
-/*
-DynamicClient provides a client with group controls and event notifications.
-A client can use the insert channel to add members to the group. When the group
-becomes full, the insert channel blocks until a running process exits the group.
-Once there are no more members have been added, the client can close the dynamic
-group, which causes it to become a static group.
-*/
-type DynamicClient interface {
-
 	/*
 	   Inserter provides an unbuffered channel for adding members to a group. When the
 	   group becomes full, the insert channel blocks until a running process exits.
@@ -59,11 +50,6 @@ type DynamicClient interface {
 	Close()
 
 	Get(name string) (ifrit.Process, bool)
-
-	/*
-	   See the StaticClient interface for documentation on event listeners.
-	*/
-	StaticClient
 }
 
 type memberRequest struct {

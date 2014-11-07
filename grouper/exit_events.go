@@ -1,6 +1,9 @@
 package grouper
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 /*
 An ExitEvent occurs every time an invoked member exits.
@@ -65,4 +68,20 @@ func (b *exitEventBroadcaster) Close() {
 		close(channel)
 	}
 	b.channels = nil
+}
+
+type ErrorTrace []ExitEvent
+
+func (trace ErrorTrace) Error() string {
+	msg := "Exit trace for group:\n"
+
+	for _, exit := range trace {
+		if exit.Err == nil {
+			msg += fmt.Sprintf("%s exited with nil\n", exit.Member.Name)
+		} else {
+			msg += fmt.Sprintf("%s exited with error: %s\n", exit.Member.Name, exit.Err.Error())
+		}
+	}
+
+	return msg
 }
